@@ -1,0 +1,15 @@
+[Unit]
+Description=YubiKey Monitor Daemon
+After=network.target
+
+[Service]
+Type=simple
+# Update the ExecStart path to the absolute path of monitor.py
+ExecStart=/usr/bin/env python3 /path/to/monitor.py
+Restart=on-failure
+# Adjust the User and Group as needed
+User=your_user
+Group=your_group
+
+[Install]
+WantedBy=multi-user.target

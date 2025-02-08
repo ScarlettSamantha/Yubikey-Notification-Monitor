@@ -1,0 +1,33 @@
+# pyproject.toml
+[build-system]
+# We use setuptools and wheel for building the package.
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Basic metadata for the YubiKey Monitor package.
+name = "yubikey-monitor"
+version = "0.1.0"
+description = "Daemon to monitor YubiKey devices via lsusb."
+readme = "README.md"            
+requires-python = ">=3.10"
+license = { file = "MIT" }  
+authors = [
+    { name = "Scarlett Samantha Verheuel", email = "scarlett.verheul@gmail.com" }  
+]
+# Classifiers help users and tools to categorize your project.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+# Specify project dependencies; this project uses only standard libraries.
+dependencies = [
+    # No external dependencies required.
+]
+
+[project.urls]
+# Optional URLs related to the project.
+"Homepage" = "https://scarlettbytes.nl/yubikey/"
