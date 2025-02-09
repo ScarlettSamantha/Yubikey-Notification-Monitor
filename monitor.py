@@ -1,49 +1,48 @@
 #!/usr/bin/env python3
 """
 Monitor YubiKey presence and lock the screen if the key remains absent beyond a grace period.
+
+This script runs as a daemon and continuously monitors the YubiKey status.
+If the key remains absent beyond the specified grace period, it locks the screen.
 """
 
 import os
-import time
 import subprocess
-from typing import Optional, Protocol
-
+import time
+import signal
+from typing import Optional
+import notify2
+import daemon
+import daemon.pidfile
 from yubi_detect import YubiDetect
-
-
-class YubiDetector(Protocol):
-    def search_yubikey_exists(self) -> bool:
-        ...
 
 
 class Monitor:
     """
     Monitors the YubiKey state and triggers screen locking upon prolonged absence.
     """
-
     NOTIFICATION_TITLE: str = "Yubikey Notification Service"
 
-    def __init__(self, grace_period: int = 10, detector: Optional[YubiDetector] = None) -> None:
-        # Allow injection of a custom detector for testing purposes.
-        self.detection_instance: YubiDetector = detector if detector is not None else YubiDetect(True)
+    def __init__(self, grace_period: int = 10, detector: Optional[YubiDetect] = None) -> None:
+        notify2.init('Yubikey pressense tracker')
+        
+        self.detection_instance: YubiDetect = detector if detector is not None else YubiDetect(True)
         self.key_present: bool = self.detection_instance.search_yubikey_exists()
         self.previous_present: bool = self.key_present
         self.active_countdown: bool = False
         self.countdown_iteration: int = 0
         self.seconds_grace: int = grace_period
-        self.last_notification_id: Optional[str] = None
+        self.last_notification_id: notify2.Notification = notify2.Notification("", "", "")
         self.active_monitor: bool = True
+        self.running: bool = True  # Controls the main monitoring loop
 
-    def send_notification(self, title: str, message: str, replace: Optional[str] = None) -> Optional[str]:
+
+    def send_notification(self, title: str, message: str) -> Optional[str]:
         """
-        Send a desktop notification.
+        Send a desktop notification using notify-send.
         """
-        cmd = ["notify-send"]
-        if replace:
-            cmd.append(f"--replace-id={replace}")
-        cmd.extend(["-p", title, message])
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        return result.stdout.strip() if result.returncode == 0 else None
+        self.last_notification_id.update(title, message)
+        self.last_notification_id.show()
 
     def _reset_countdown(self) -> None:
         """
@@ -51,7 +50,6 @@ class Monitor:
         """
         self.countdown_iteration = 0
         self.active_countdown = False
-        self.last_notification_id = None
 
     def reset_from_login(self) -> None:
         """
@@ -59,6 +57,8 @@ class Monitor:
         """
         self._reset_countdown()
         self.active_monitor = True
+        self.key_present = self.detection_instance.search_yubikey_exists()
+        self.previous_present = self.key_present
 
     def lock_screen(self) -> None:
         """
@@ -68,7 +68,7 @@ class Monitor:
             subprocess.run(["gnome-screensaver-command", "-l"], check=False)
 
         def lock_kde() -> None:
-            subprocess.run(["qdbus-qt6", "org.freedesktop.ScreenSaver", "/ScreenSaver", "Lock"], check=False)
+            lock_default()
 
         def lock_xfce() -> None:
             subprocess.run(["xflock4"], check=False)
@@ -92,7 +92,7 @@ class Monitor:
             """
             Detect the current GUI environment.
             """
-            desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+            desktop: str = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
             if "gnome" in desktop:
                 return "gnome"
             if "kde" in desktop:
@@ -109,7 +109,7 @@ class Monitor:
                 return "sway"
             return None
 
-        gui = detect_gui()
+        gui: Optional[str] = detect_gui()
         try:
             if gui == "gnome":
                 lock_gnome()
@@ -130,8 +130,8 @@ class Monitor:
         except Exception:
             lock_default()
 
-        self.active_monitor = False
-        self.send_notification(self.NOTIFICATION_TITLE, "Key removed. Locking screen.", self.last_notification_id or "")
+        self.active_monitor = False  # Prevent further actions after locking
+        self.send_notification(self.NOTIFICATION_TITLE, "YubiKey removed. Locking screen.")
         self._reset_countdown()
 
     def key_reinserted(self) -> None:
@@ -139,21 +139,20 @@ class Monitor:
         Handle the event when the key is reinserted.
         """
         self._reset_countdown()
-        self.send_notification(self.NOTIFICATION_TITLE, "Key reinserted.", self.last_notification_id or "")
+        self.send_notification(self.NOTIFICATION_TITLE, "YubiKey has been reinserted.")
         self.active_monitor = True
+        time.sleep(3)
+        self.last_notification_id.close()
+        self.last_notification_id = notify2.Notification("", "", "")
 
     def key_absent(self) -> None:
         """
         Increment the countdown when the key is absent and send a notification.
         """
         if self.countdown_iteration == 0:
-            self.last_notification_id = self.send_notification(self.NOTIFICATION_TITLE, "Key has been removed.")
+            self.send_notification(self.NOTIFICATION_TITLE, "Key has been removed.")
         else:
-            self.send_notification(
-                self.NOTIFICATION_TITLE,
-                f"Key absent for {self.countdown_iteration} second(s) out of {self.seconds_grace}.",
-                self.last_notification_id or ""
-            )
+            self.send_notification(self.NOTIFICATION_TITLE, f"Key absent for {self.countdown_iteration} second(s) out of {self.seconds_grace}.")
         self.countdown_iteration += 1
 
     def should_lock(self) -> bool:
@@ -166,7 +165,7 @@ class Monitor:
         """
         Execute one iteration of the monitoring loop.
         """
-        present = self.detection_instance.search_yubikey_exists()
+        present: bool = self.detection_instance.search_yubikey_exists()
         if present:
             if not self.previous_present:
                 self.key_reinserted()
@@ -179,13 +178,33 @@ class Monitor:
 
     def monitor(self) -> None:
         """
-        Continuously monitor the YubiKey state and trigger actions on state changes.
-        """
-        while True:
+        Continuously monitor the YubiKey state until the daemon is stopped.
+        """ 
+        while self.running:
             self.monitor_iteration()
             time.sleep(1)
 
 
-if __name__ == "__main__":
-    monitor_instance = Monitor(grace_period=10)
+def main() -> None:
+    """
+    Main function to run the monitor daemon.
+    Sets up signal handling for a graceful shutdown.
+    """
+    monitor_instance: Monitor = Monitor(grace_period=10)
+
+    # Signal handler to set the running flag to False for graceful exit.
+    def handle_sigterm(signum: int, frame: Optional[object]) -> None:
+        monitor_instance.running = False
+   
+    signal.signal(signal.SIGTERM, handle_sigterm)
     monitor_instance.monitor()
+
+
+if __name__ == "__main__":
+    # Open log files for stdout and stderr redirection.
+    stdout_log = open("/tmp/yubimonitor.log", "a+")
+    stderr_log = open("/tmp/yubimonitor.err", "a+")
+
+    # Create a daemon context with a PID file for proper daemon management.
+    with daemon.DaemonContext(working_directory="/", umask=0o002, pidfile=daemon.pidfile.PIDLockFile("/tmp/yubimonitor.pid", timeout=3600), stdout=stdout_log, stderr=stderr_log):
+        main()
