@@ -3,10 +3,10 @@
 Pytest tests for the Monitor module.
 """
 
-from monitor import Monitor
+from monitor import Monitor, YubiDetect
 
 
-class DummyDetection:
+class DummyDetection(YubiDetect):
     def __init__(self, states):
         self.states = states
         self.index = 0
