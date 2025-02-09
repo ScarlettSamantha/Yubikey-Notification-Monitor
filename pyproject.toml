@@ -31,3 +31,8 @@ dependencies = [
 [project.urls]
 # Optional URLs related to the project.
 "Homepage" = "https://scarlettbytes.nl/yubikey/"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
