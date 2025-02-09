@@ -3,7 +3,7 @@
 Pytest tests for the Monitor module.
 """
 
-from yubikey_monitor.monitor import Monitor
+from monitor import Monitor
 
 
 class DummyDetection:
