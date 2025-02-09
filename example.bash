@@ -16,6 +16,5 @@ fi
 
 # Start the daemon in a new session and redirect I/O.
 setsid /usr/bin/python /home/scarlett/Code/yubikey_monitor/monitor.py </dev/null &>/dev/null &
-echo $! > "$PID_FILE"          # Save the new daemon's PID.
 
 indent_message 2 "$SUCCESS_EMOJI Yubikey tracking daemon has been started"
